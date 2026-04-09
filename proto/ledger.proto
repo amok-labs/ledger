@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package ledger;
+
+import "google/protobuf/timestamp.proto";
+
+service Ledger {
+  // Log a new event
+  rpc Log(LogRequest) returns (LogResponse);
+  // Query events with filters
+  rpc Query(QueryRequest) returns (QueryResponse);
+  // Subscribe to real-time event stream
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Core event type used throughout the system
+message Event {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string source = 3;        // "pds", "haro", etc.
+  string event_type = 4;    // "skill_invoked", "agent_spawned", etc.
+  string payload = 5;       // JSON string for flexible extra data
+}
+
+// Log RPC
+message LogRequest {
+  string source = 1;
+  string event_type = 2;
+  string payload = 3;       // JSON string
+}
+
+message LogResponse {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// Query RPC
+message QueryRequest {
+  string source = 1;        // filter by source (empty = all)
+  string event_type = 2;    // filter by event_type (empty = all)
+  int64 limit = 3;          // max results (0 = no limit)
+  google.protobuf.Timestamp since = 4;  // events after this time
+  google.protobuf.Timestamp until = 5;  // events before this time
+}
+
+message QueryResponse {
+  repeated Event events = 1;
+}
+
+// Subscribe RPC
+message SubscribeRequest {
+  string source = 1;        // filter by source (empty = all)
+  string event_type = 2;    // filter by event_type (empty = all)
+}
+
+// Health RPC
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;        // "healthy" or "degraded"
+  uint64 uptime_seconds = 2;
+  uint64 event_count = 3;
+  string version = 4;
+}

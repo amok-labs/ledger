@@ -1,0 +1,22 @@
+[package]
+name = "ledger-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ledger"
+path = "src/main.rs"
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+anyhow = "1"
+
+[build-dependencies]
+tonic-build = "0.12"
