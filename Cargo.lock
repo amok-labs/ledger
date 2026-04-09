@@ -709,10 +709,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "ledger-client",
  "prost",
  "prost-types",
  "rusqlite",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tonic",
