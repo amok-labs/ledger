@@ -6,17 +6,19 @@
     <string>com.ledger.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>LEDGERD_PATH_PLACEHOLDER</string>
+        <string>__LEDGERD_BIN__</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
     <key>StandardOutPath</key>
-    <string>LOG_PATH_PLACEHOLDER/ledgerd.stdout.log</string>
+    <string>__LEDGER_DIR__/ledgerd.stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>LOG_PATH_PLACEHOLDER/ledgerd.stderr.log</string>
+    <string>__LEDGER_DIR__/ledgerd.stderr.log</string>
     <key>WorkingDirectory</key>
-    <string>HOME_PLACEHOLDER</string>
+    <string>__HOME__</string>
 </dict>
 </plist>
