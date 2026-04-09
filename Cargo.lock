@@ -678,12 +678,15 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "hyper-util",
  "prost",
  "prost-types",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tonic",
  "tonic-build",
+ "tower 0.4.13",
 ]
 
 [[package]]
