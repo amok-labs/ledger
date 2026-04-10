@@ -8,6 +8,7 @@ use std::process;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hyper_util::rt::TokioIo;
+use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
@@ -68,10 +69,29 @@ enum Commands {
         #[arg(long, name = "type")]
         event_type: Option<String>,
     },
+    /// Process a Claude Code hook event from stdin
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
+    },
     /// Install the ledgerd daemon as a launchd service
     Install,
     /// Show daemon health status
     Status,
+}
+
+#[derive(Subcommand)]
+enum HookCommand {
+    /// PostToolUse (Skill|Agent) — reads tool_name, tool_input
+    Skill,
+    /// PostToolUse (Write|Edit) — reads tool_input.file_path
+    File,
+    /// WorktreeCreate — reads name
+    Worktree,
+    /// InstructionsLoaded — logs session init
+    Init,
+    /// PreToolUse/PostToolUse — logs scrub event
+    Scrub,
 }
 
 async fn connect(socket_path: &str) -> Result<LedgerClient<Channel>> {
@@ -244,6 +264,108 @@ async fn cmd_subscribe(
                 eprintln!("Stream error: {}", e);
                 break;
             }
+        }
+    }
+
+    Ok(())
+}
+
+async fn read_stdin_json() -> Result<serde_json::Value> {
+    let mut buf = String::new();
+    tokio::io::stdin().read_to_string(&mut buf).await.context("Failed to read stdin")?;
+    serde_json::from_str(&buf).context("Invalid JSON on stdin")
+}
+
+fn json_str(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+async fn cmd_hook(client: &mut LedgerClient<Channel>, command: HookCommand) -> Result<()> {
+    let session = std::env::var("CLAUDE_SESSION_ID").unwrap_or_else(|_| "unknown".into());
+
+    match command {
+        HookCommand::Skill => {
+            let input = read_stdin_json().await?;
+            let tool_name = json_str(&input, "tool_name").unwrap_or_default();
+            let tool_input = input.get("tool_input");
+
+            let (event_type, name) = match tool_name.as_str() {
+                "Skill" => {
+                    let skill = tool_input
+                        .and_then(|ti| ti.get("skill"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    ("skill_invoked", skill.to_string())
+                }
+                "Agent" => {
+                    let agent = tool_input
+                        .and_then(|ti| ti.get("subagent_type").or_else(|| ti.get("description")))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    ("agent_spawned", agent.to_string())
+                }
+                _ => return Ok(()),
+            };
+
+            let payload = serde_json::json!({
+                "name": name,
+                "session": session,
+            });
+            cmd_log(client, "pds".into(), event_type.into(), payload.to_string()).await?;
+        }
+        HookCommand::File => {
+            let input = read_stdin_json().await?;
+            let tool_input = input.get("tool_input");
+            let file_path = tool_input
+                .and_then(|ti| ti.get("file_path").or_else(|| ti.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if file_path.is_empty() {
+                return Ok(());
+            }
+
+            let ext = file_path
+                .rsplit('.')
+                .next()
+                .unwrap_or("")
+                .to_lowercase();
+
+            let payload = serde_json::json!({
+                "path": file_path,
+                "ext": ext,
+                "session": session,
+            });
+            cmd_log(client, "pds".into(), "file_modified".into(), payload.to_string()).await?;
+        }
+        HookCommand::Worktree => {
+            let input = read_stdin_json().await?;
+            let name = json_str(&input, "name").unwrap_or_else(|| "unknown".into());
+
+            let payload = serde_json::json!({
+                "name": name,
+                "session": session,
+            });
+            cmd_log(client, "pds".into(), "worktree_created".into(), payload.to_string()).await?;
+        }
+        HookCommand::Init => {
+            // Consume stdin (may be empty or {})
+            let _ = read_stdin_json().await;
+
+            let payload = serde_json::json!({
+                "session": session,
+            });
+            cmd_log(client, "pds".into(), "instructions_loaded".into(), payload.to_string()).await?;
+        }
+        HookCommand::Scrub => {
+            let input = read_stdin_json().await?;
+            let tool_name = json_str(&input, "tool_name").unwrap_or_else(|| "unknown".into());
+
+            let payload = serde_json::json!({
+                "tool": tool_name,
+                "session": session,
+            });
+            cmd_log(client, "pds".into(), "secret_scrubbed".into(), payload.to_string()).await?;
         }
     }
 
@@ -442,6 +564,16 @@ async fn main() {
                 }
             };
             cmd_subscribe(&mut client, source, event_type).await
+        }
+        Commands::Hook { command } => {
+            let mut client = match connect(&socket_path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            cmd_hook(&mut client, command).await
         }
         Commands::Install => cmd_install().await,
         Commands::Status => {
