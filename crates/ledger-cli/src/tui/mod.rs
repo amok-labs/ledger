@@ -17,14 +17,8 @@ use app::{App, DaemonStatus, Focus, InputMode};
 use daemon::DaemonMsg;
 use event::TermEvent;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Parse optional --socket flag
-    let socket_path = std::env::args()
-        .position(|a| a == "--socket")
-        .and_then(|i| std::env::args().nth(i + 1));
-
-    // Setup terminal
+/// Run the TUI. Called from `ledger tui`.
+pub async fn run(socket_path: String) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -39,10 +33,8 @@ async fn main() -> Result<()> {
         original_hook(panic_info);
     }));
 
-    // Run the app
     let result = run_app(&mut terminal, socket_path).await;
 
-    // Restore terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
@@ -51,25 +43,22 @@ async fn main() -> Result<()> {
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    socket_path: Option<String>,
+    socket_path: String,
 ) -> Result<()> {
     let mut app = App::new();
 
-    // Start background services
     let mut term_events = event::spawn_event_reader();
     let mut daemon_rx = daemon::spawn_daemon_bridge(socket_path);
 
     loop {
-        // Draw
         terminal.draw(|f| ui::draw(f, &app))?;
 
-        // Wait for next event
         tokio::select! {
             Some(term_event) = term_events.recv() => {
                 match term_event {
                     TermEvent::Key(key) => handle_key(&mut app, key),
-                    TermEvent::Resize => {} // ratatui handles resize
-                    TermEvent::Tick => {}          // triggers redraw for uptime
+                    TermEvent::Resize => {}
+                    TermEvent::Tick => {}
                 }
             }
             Some(daemon_msg) = daemon_rx.recv() => {
@@ -86,7 +75,6 @@ async fn run_app(
 }
 
 fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    // Ctrl+C always quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.should_quit = true;
         return;
@@ -131,10 +119,8 @@ fn handle_key_editing(app: &mut App, key: crossterm::event::KeyEvent) {
 
 fn handle_key_normal(app: &mut App, key: crossterm::event::KeyEvent) {
     match key.code {
-        // Quit
         KeyCode::Char('q') => app.should_quit = true,
 
-        // Navigation
         KeyCode::Char('j') | KeyCode::Down => {
             if app.focus == Focus::Detail {
                 app.detail_scroll_down();
@@ -152,7 +138,6 @@ fn handle_key_normal(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('g') => app.select_first(),
         KeyCode::Char('G') => app.select_last(),
 
-        // Focus cycling
         KeyCode::Tab => {
             app.focus = match app.focus {
                 Focus::EventList => Focus::Detail,
@@ -162,7 +147,6 @@ fn handle_key_normal(app: &mut App, key: crossterm::event::KeyEvent) {
             };
         }
 
-        // Enter detail on Enter/Right
         KeyCode::Enter | KeyCode::Right => {
             if app.focus == Focus::EventList {
                 app.focus = Focus::Detail;
@@ -170,14 +154,12 @@ fn handle_key_normal(app: &mut App, key: crossterm::event::KeyEvent) {
             }
         }
 
-        // Back to list on Left/Esc
         KeyCode::Left | KeyCode::Esc => {
             if app.focus == Focus::Detail {
                 app.focus = Focus::EventList;
             }
         }
 
-        // Filters
         KeyCode::Char('/') => {
             app.focus = Focus::FilterSource;
             app.input_mode = InputMode::Editing;
@@ -187,14 +169,12 @@ fn handle_key_normal(app: &mut App, key: crossterm::event::KeyEvent) {
             app.input_mode = InputMode::Editing;
         }
 
-        // Clear filters
         KeyCode::Char('c') => {
             app.filter_source.clear();
             app.filter_type.clear();
             app.rebuild_filter();
         }
 
-        // Pause/unpause live stream
         KeyCode::Char('p') => {
             if app.paused {
                 app.unpause();

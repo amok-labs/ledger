@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use ledger_client::Event;
+use crate::proto::Event;
 
 /// Which pane is currently focused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

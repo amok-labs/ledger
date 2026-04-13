@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, DaemonStatus, Focus, InputMode};
+use super::app::{App, DaemonStatus, Focus, InputMode};
 
 /// Render the entire UI.
 pub fn draw(f: &mut Frame, app: &App) {
@@ -280,7 +280,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
 // ── Helpers ────────────────────────────────────────────────
 
-fn format_timestamp(event: &ledger_client::Event) -> String {
+fn format_timestamp(event: &crate::proto::Event) -> String {
     event
         .timestamp
         .as_ref()
@@ -292,7 +292,7 @@ fn format_timestamp(event: &ledger_client::Event) -> String {
         .unwrap_or_else(|| "—".to_string())
 }
 
-fn format_timestamp_full(event: &ledger_client::Event) -> String {
+fn format_timestamp_full(event: &crate::proto::Event) -> String {
     event
         .timestamp
         .as_ref()

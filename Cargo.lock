@@ -861,9 +861,12 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "crossterm",
+ "futures",
  "hyper-util",
  "prost",
  "prost-types",
+ "ratatui",
  "serde_json",
  "tokio",
  "tokio-stream",
@@ -884,21 +887,6 @@ dependencies = [
  "tonic",
  "tonic-build",
  "tower 0.4.13",
-]
-
-[[package]]
-name = "ledger-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "crossterm",
- "futures",
- "ledger-client",
- "ratatui",
- "serde_json",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

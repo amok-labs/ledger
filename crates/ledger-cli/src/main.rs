@@ -2,6 +2,8 @@ pub mod proto {
     tonic::include_proto!("ledger");
 }
 
+mod tui;
+
 use std::path::PathBuf;
 use std::process;
 
@@ -21,14 +23,14 @@ fn default_socket_path() -> PathBuf {
 }
 
 #[derive(Parser)]
-#[command(name = "ledger", about = "CLI for the ledger telemetry daemon")]
+#[command(name = "ledger", about = "Local telemetry daemon for Claude Code")]
 struct Cli {
     /// Path to the daemon Unix socket
     #[arg(long, global = true)]
     socket: Option<String>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -47,18 +49,8 @@ enum Commands {
     },
     /// Query events from the daemon
     Query {
-        /// Filter by source
-        #[arg(long)]
-        source: Option<String>,
-        /// Filter by event type
-        #[arg(long, name = "type")]
-        event_type: Option<String>,
-        /// Maximum number of results
-        #[arg(long)]
-        limit: Option<i64>,
-        /// Events after this ISO 8601 timestamp
-        #[arg(long)]
-        since: Option<String>,
+        #[command(subcommand)]
+        command: QueryCommand,
     },
     /// Subscribe to real-time events
     Subscribe {
@@ -74,10 +66,44 @@ enum Commands {
         #[command(subcommand)]
         command: HookCommand,
     },
+    /// Open interactive TUI
+    Tui,
     /// Install the ledgerd daemon as a launchd service
     Install,
     /// Show daemon health status
     Status,
+}
+
+#[derive(Subcommand)]
+enum QueryCommand {
+    /// Search events with filters
+    Events {
+        /// Filter by source
+        #[arg(long)]
+        source: Option<String>,
+        /// Filter by event type
+        #[arg(long, name = "type")]
+        event_type: Option<String>,
+        /// Maximum number of results
+        #[arg(long, default_value = "50")]
+        limit: i64,
+        /// Events after this ISO 8601 timestamp
+        #[arg(long)]
+        since: Option<String>,
+    },
+    /// List known event sources
+    Sources,
+    /// List known event types
+    Types,
+    /// Count events, optionally filtered
+    Count {
+        /// Filter by source
+        #[arg(long)]
+        source: Option<String>,
+        /// Filter by event type
+        #[arg(long, name = "type")]
+        event_type: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -94,7 +120,17 @@ enum HookCommand {
     Scrub,
 }
 
-async fn connect(socket_path: &str) -> Result<LedgerClient<Channel>> {
+async fn connect_or_exit(socket_path: &str) -> LedgerClient<Channel> {
+    match connect(socket_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
+    }
+}
+
+pub(crate) async fn connect(socket_path: &str) -> Result<LedgerClient<Channel>> {
     let path = PathBuf::from(socket_path);
     if !path.exists() {
         eprintln!(
@@ -175,14 +211,8 @@ async fn cmd_log(client: &mut LedgerClient<Channel>, source: String, event_type:
     Ok(())
 }
 
-async fn cmd_query(
-    client: &mut LedgerClient<Channel>,
-    source: Option<String>,
-    event_type: Option<String>,
-    limit: Option<i64>,
-    since: Option<String>,
-) -> Result<()> {
-    let since_ts = since
+fn parse_since(since: Option<String>) -> Result<Option<prost_types::Timestamp>> {
+    since
         .map(|s| {
             chrono::DateTime::parse_from_rfc3339(&s)
                 .or_else(|_| chrono::DateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S"))
@@ -192,13 +222,36 @@ async fn cmd_query(
                 })
                 .context("Invalid timestamp format. Use ISO 8601 (e.g., 2026-01-01T00:00:00Z)")
         })
-        .transpose()?;
+        .transpose()
+}
+
+async fn cmd_query(client: &mut LedgerClient<Channel>, command: QueryCommand) -> Result<()> {
+    match command {
+        QueryCommand::Events { source, event_type, limit, since } => {
+            cmd_query_events(client, source, event_type, limit, since).await
+        }
+        QueryCommand::Sources => cmd_query_sources(client).await,
+        QueryCommand::Types => cmd_query_types(client).await,
+        QueryCommand::Count { source, event_type } => {
+            cmd_query_count(client, source, event_type).await
+        }
+    }
+}
+
+async fn cmd_query_events(
+    client: &mut LedgerClient<Channel>,
+    source: Option<String>,
+    event_type: Option<String>,
+    limit: i64,
+    since: Option<String>,
+) -> Result<()> {
+    let since_ts = parse_since(since)?;
 
     let response = client
         .query(proto::QueryRequest {
             source: source.unwrap_or_default(),
             event_type: event_type.unwrap_or_default(),
-            limit: limit.unwrap_or(0),
+            limit,
             since: since_ts,
             until: None,
         })
@@ -226,6 +279,94 @@ async fn cmd_query(
         println!("  Data:   {}", format_payload(&event.payload));
         println!();
     }
+
+    Ok(())
+}
+
+async fn cmd_query_sources(client: &mut LedgerClient<Channel>) -> Result<()> {
+    let response = client
+        .query(proto::QueryRequest {
+            source: String::new(),
+            event_type: String::new(),
+            limit: 0,
+            since: None,
+            until: None,
+        })
+        .await
+        .context("Failed to query events")?
+        .into_inner();
+
+    let mut sources: Vec<String> = response
+        .events
+        .iter()
+        .map(|e| e.source.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    sources.sort();
+
+    if sources.is_empty() {
+        println!("No sources found.");
+    } else {
+        for source in sources {
+            println!("{}", source);
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_query_types(client: &mut LedgerClient<Channel>) -> Result<()> {
+    let response = client
+        .query(proto::QueryRequest {
+            source: String::new(),
+            event_type: String::new(),
+            limit: 0,
+            since: None,
+            until: None,
+        })
+        .await
+        .context("Failed to query events")?
+        .into_inner();
+
+    let mut types: Vec<String> = response
+        .events
+        .iter()
+        .map(|e| e.event_type.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    types.sort();
+
+    if types.is_empty() {
+        println!("No event types found.");
+    } else {
+        for t in types {
+            println!("{}", t);
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_query_count(
+    client: &mut LedgerClient<Channel>,
+    source: Option<String>,
+    event_type: Option<String>,
+) -> Result<()> {
+    let response = client
+        .query(proto::QueryRequest {
+            source: source.unwrap_or_default(),
+            event_type: event_type.unwrap_or_default(),
+            limit: 0,
+            since: None,
+            until: None,
+        })
+        .await
+        .context("Failed to query events")?
+        .into_inner();
+
+    println!("{}", response.events.len());
 
     Ok(())
 }
@@ -523,67 +664,33 @@ async fn main() {
         .unwrap_or_else(|| default_socket_path().to_string_lossy().to_string());
 
     let result = match cli.command {
-        Commands::Log {
+        None | Some(Commands::Tui) => tui::run(socket_path).await,
+        Some(Commands::Log {
             source,
             event_type,
             payload,
-        } => {
-            let mut client = match connect(&socket_path).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    process::exit(1);
-                }
-            };
+        }) => {
+            let mut client = connect_or_exit(&socket_path).await;
             cmd_log(&mut client, source, event_type, payload).await
         }
-        Commands::Query {
-            source,
-            event_type,
-            limit,
-            since,
-        } => {
-            let mut client = match connect(&socket_path).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    process::exit(1);
-                }
-            };
-            cmd_query(&mut client, source, event_type, limit, since).await
+        Some(Commands::Query { command }) => {
+            let mut client = connect_or_exit(&socket_path).await;
+            cmd_query(&mut client, command).await
         }
-        Commands::Subscribe {
+        Some(Commands::Subscribe {
             source,
             event_type,
-        } => {
-            let mut client = match connect(&socket_path).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    process::exit(1);
-                }
-            };
+        }) => {
+            let mut client = connect_or_exit(&socket_path).await;
             cmd_subscribe(&mut client, source, event_type).await
         }
-        Commands::Hook { command } => {
-            let mut client = match connect(&socket_path).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    process::exit(1);
-                }
-            };
+        Some(Commands::Hook { command }) => {
+            let mut client = connect_or_exit(&socket_path).await;
             cmd_hook(&mut client, command).await
         }
-        Commands::Install => cmd_install().await,
-        Commands::Status => {
-            let mut client = match connect(&socket_path).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    process::exit(1);
-                }
-            };
+        Some(Commands::Install) => cmd_install().await,
+        Some(Commands::Status) => {
+            let mut client = connect_or_exit(&socket_path).await;
             cmd_status(&mut client).await
         }
     };
