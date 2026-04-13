@@ -856,7 +856,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "ledger-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "hyper-util",
@@ -891,7 +891,7 @@ dependencies = [
 
 [[package]]
 name = "ledgerd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
