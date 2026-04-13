@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ledgerd", "crates/ledger-cli", "crates/ledger-client"]
+members = ["crates/ledgerd", "crates/ledger-cli", "crates/ledger-client", "crates/ledger-tui"]
 resolver = "2"
 
 [workspace.package]
